@@ -108,7 +108,7 @@
 
 (defrecord CloudWatchConnector [client]
   connector/Connector
-  (query [this pattern] nil)
+  (query [this pattern] (matcher/tree-query finder pattern))
   (load [this target opts]
     (let [step (* 60 5)
           path (series/name->path target)
