@@ -5,6 +5,8 @@
   (:import (com.amazonaws.auth BasicAWSCredentials)
            (com.amazonaws.services.cloudwatch AmazonCloudWatchClient)
            (com.amazonaws.services.cloudwatch.model GetMetricStatisticsRequest Dimension Datapoint)
+           (com.amazonaws.services.ec2 AmazonEC2Client)
+           (com.amazonaws.services.ec2.model DescribeInstancesRequest Filter)
            (java.util Date)))
 
 (def instance-metrics
@@ -81,10 +83,20 @@
 (defn basic-credentials [access-key secret-key]
   (BasicAWSCredentials. access-key secret-key))
 
-(defn client [credentials]
-  (AmazonCloudWatchClient. credentials))
+(defn clients [credentials]
+  {:ec2 (AmazonEC2Client. credentials)
+   :cloudwatch (AmazonCloudWatchClient. credentials)})
 
-(defn get-metric-statistics [client opts step spec]
+(defn get-id-for-name [clients name]
+  (let [request (doto (DescribeInstancesRequest.)
+                  (.setFilters [(Filter. "tag:Name" [name])]))
+        response (.describeInstances (:ec2 clients) request)
+        reservations (.getReservations response)]
+    (if-let [reservation (first reservations)]
+      (if-let [instance (first (.getInstances reservation))]
+        (.getInstanceId instance)))))
+
+(defn get-metric-statistics [clients opts step spec]
   (let [request (doto (GetMetricStatisticsRequest.)
                   (.setMetricName (:metric-name spec))
                   (.setNamespace (:namespace spec))
@@ -93,7 +105,7 @@
                   (.setStartTime (Date. (* 1000 (:start opts))))
                   (.setEndTime (Date. (* 1000 (:end opts))))
                   (.setPeriod (int step)))]
-    (.getMetricStatistics client request)))
+    (.getMetricStatistics (:cloudwatch clients) request)))
 
 (defn- bucket [opts step datapoints value-fn]
   (let [start (:start opts)
@@ -103,10 +115,11 @@
     (doseq [dp datapoints]
       (let [ts (quot (.getTime (.getTimestamp dp)) 1000)
             b (quot (- ts start) step)]
-        (aset values b (value-fn dp))))
+        (if (< -1 b buckets)
+          (aset values b (value-fn dp)))))
     (seq values)))
 
-(defrecord CloudWatchConnector [client]
+(defrecord CloudWatchConnector [clients]
   connector/Connector
   (query [this pattern] (matcher/tree-query finder pattern))
   (load [this target opts]
@@ -118,14 +131,18 @@
               (pmap (fn [result]
                       (if (:is-leaf result)
                         (let [node-path (:path result)
-                              spec (apply merge {:dimension-value dimension-value} (matcher/tree-traverse finder node-path))
-                              stats (get-metric-statistics client opts step spec)]
-                          {:name   (str (:key spec) \. dimension-value \. (:metric-name spec) \. (:statistic spec))
-                           :step   step
-                           :start  (:start opts)
-                           :end    (:end opts)
-                           :values (bucket opts step (.getDatapoints stats) (:value-function spec))})))
+                              spec (apply merge (matcher/tree-traverse finder node-path))
+                              dimension-value (if (and (= "InstanceId" (:dimension-name spec))
+                                                       (not (.startsWith dimension-value "i-")))
+                                                (get-id-for-name clients dimension-value))]
+                          (if dimension-value
+                            (let [stats (get-metric-statistics clients opts step (assoc spec :dimension-value dimension-value))]
+                              {:name   (str (:key spec) \. dimension-value \. (:metric-name spec) \. (:statistic spec))
+                               :step   step
+                               :start  (:start opts)
+                               :end    (:end opts)
+                               :values (bucket opts step (.getDatapoints stats) (:value-function spec))})))))
                     results)))))
 
 (defn cloudwatch-connector [access-key secret-key]
-  (->CloudWatchConnector (client (basic-credentials access-key secret-key))))
+  (->CloudWatchConnector (clients (basic-credentials access-key secret-key))))
