@@ -132,11 +132,12 @@
                       (if (:is-leaf result)
                         (let [node-path (:path result)
                               spec (apply merge (matcher/tree-traverse finder node-path))
-                              dimension-value (if (and (= "InstanceId" (:dimension-name spec))
-                                                       (not (.startsWith dimension-value "i-")))
-                                                (get-id-for-name clients dimension-value))]
+                              spec-dimension-value (if (and (= "InstanceId" (:dimension-name spec))
+                                                            (not (.startsWith dimension-value "i-")))
+                                                     (get-id-for-name clients dimension-value)
+                                                     dimension-value)]
                           (if dimension-value
-                            (let [stats (get-metric-statistics clients opts step (assoc spec :dimension-value dimension-value))]
+                            (let [stats (get-metric-statistics clients opts step (assoc spec :dimension-value spec-dimension-value))]
                               {:name   (str (:key spec) \. dimension-value \. (:metric-name spec) \. (:statistic spec))
                                :step   step
                                :start  (:start opts)
