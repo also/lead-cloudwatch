@@ -1,7 +1,7 @@
 (ns lead.cloudwatch.connector
   (:require [lead.connector :as connector]
             [lead.matcher :as matcher]
-            [lead.series :as series])
+            [lead.core :as core])
   (:import (com.amazonaws.auth BasicAWSCredentials)
            (com.amazonaws.services.cloudwatch AmazonCloudWatchClient)
            (com.amazonaws.services.cloudwatch.model GetMetricStatisticsRequest Dimension Datapoint)
@@ -124,7 +124,7 @@
   (query [this pattern] (matcher/tree-query finder pattern))
   (load [this target opts]
     (let [step (* 60 5)
-          path (series/name->path target)
+          path (core/name->path target)
           dimension-value (get path 1)
           results (matcher/tree-find finder target)]
       (filter identity
